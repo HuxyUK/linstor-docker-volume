@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+        "net"
 	"net/http"
 	"net/url"
+        "time"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,34 +117,50 @@ func (l *LinstorDriver) newClient() (*client.Client, error) {
 		return nil, err
 	}
 
-	baseURL, err := l.newBaseURL(config.Controllers)
-	if err != nil {
-		return nil, err
+	controllers := strings.Split(config.Controllers, ",")
+	for i := range controllers {
+
+		baseURL, err := l.newBaseURL(controllers[i])
+		if err != nil {
+			return nil, err
+		}
+
+		seconds := 1
+		timeOut := time.Duration(seconds) * time.Second
+		conn, err := net.DialTimeout("tcp", baseURL.Host, timeOut)
+
+		if err != nil {
+			continue
+		}
+
+		conn.Close()
+
+		tlsConfig, err := tlsconfig.Client(tlsconfig.Options{
+			CertFile:           config.CertFile,
+			KeyFile:            config.KeyFile,
+			CAFile:             config.CAFile,
+			InsecureSkipVerify: config.CAFile == "",
+			ExclusiveRootPools: true,
+		})
+		if err != nil {
+			continue
+		}
+
+		return client.NewClient(
+			client.BaseURL(baseURL),
+			client.BasicAuth(&client.BasicAuthCfg{
+				Username: config.Username,
+				Password: config.Password,
+			}),
+			client.HTTPClient(&http.Client{
+				Transport: &http.Transport{
+					TLSClientConfig: tlsConfig,
+				},
+			}),
+		)
 	}
 
-	tlsConfig, err := tlsconfig.Client(tlsconfig.Options{
-		CertFile:           config.CertFile,
-		KeyFile:            config.KeyFile,
-		CAFile:             config.CAFile,
-		InsecureSkipVerify: config.CAFile == "",
-		ExclusiveRootPools: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return client.NewClient(
-		client.BaseURL(baseURL),
-		client.BasicAuth(&client.BasicAuthCfg{
-			Username: config.Username,
-			Password: config.Password,
-		}),
-		client.HTTPClient(&http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: tlsConfig,
-			},
-		}),
-	)
+	return nil, err
 }
 
 func (l *LinstorDriver) newParams(name string, options map[string]string) (*LinstorParams, error) {
